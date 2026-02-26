@@ -1,0 +1,336 @@
+<!DOCTYPE html><html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Galton Board Simulation PRO</title>
+  <style>
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      text-align: center;
+      background: radial-gradient(circle, #222, #000);
+      color: #0f0;
+    }
+    #controls {
+      margin: 20px;
+    }
+    canvas {
+      background: radial-gradient(ellipse at center, #222 0%, #111 100%);
+      border: 3px inset #0f0;
+      box-shadow: 0 0 20px #0f0;
+      display: block;
+      margin: 0 auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>Galton Board Simulation PRO</h1>  <div id="controls">
+    <label>Number of Balls (100 - 10000): <input type="range" id="ballCount" min="100" max="10000" step="100" value="1000"><span id="ballCountVal">1000</span></label><br><br>
+    <label>Simulation Duration (1-1000 seconds, step 1): <input type="range" id="duration" min="1" max="1000" step="1" ><span id="durationVal">10</span></label> <label><input type="checkbox" id="realTimeCheckbox"> Real Time</label><br><br>
+    <label>Ball Size (2-10 px): <input type="range" id="ballSize" min="2" max="10" value="4"><span id="ballSizeVal">4</span></label><br><br>
+    <label>Obstacle Size (2-10 px): <input type="range" id="pegSize" min="2" max="10" value="3"><span id="pegSizeVal">3</span></label><br><br>
+    <label>Number of Bins: <input type="range" id="binCount" min="1" max="1000" step="10" value="80"><span id="binCountVal">80</span></label><br><br>
+    <fieldset>
+      <legend>Simulation Mode:</legend>
+      <label><input type="radio" name="mode" value="classic" checked> Clásico</label>
+      <label><input type="radio" name="mode" value="randomized"> Probabilístico</label>
+    </fieldset>
+    <div style="margin-top: 20px;">
+      <label>Progress: <span id="progressVal">0%</span></label>
+      <progress id="progressBar" value="0" max="1" style="width: 80%;"></progress><br>
+      <label>Flow Rate: <span id="flowVal">0%</span></label>
+      <progress id="flowRate" value="0" max="1" style="width: 80%;"></progress><br>
+      <label>Speed: <span id="speedVal">0%</span></label>
+      <progress id="speedBar" value="0" max="1" style="width: 80%;"></progress>
+    </div>
+    <button onclick="startSimulation()">Start Simulation</button>
+  </div><canvas id="galtonCanvas" width="800" height="600"></canvas>
+
+  <script>
+    const canvas = document.getElementById('galtonCanvas');
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    const pegRows = 10;
+    let pegSize = 3;
+    const pegs = [];
+    let balls = [];
+    let activeBalls = [];
+    let bins = [];
+    let ballQueue = [];
+    let simulationDuration = 10;
+    let ballSize = 4;
+    let simulationMode = 'classic';
+    let totalBalls = 1000;
+    let floorDepth = 100;
+    let divisions = 80; // will be updated dynamically based on slider
+    let gravity = 0.5;
+    let launchInterval;
+
+    function createPegs() {
+      pegs.length = 0;
+      const pegSpacingX = width / (pegRows + 1);
+      const pegSpacingY = (height - floorDepth) / (pegRows + 2);
+
+      for (let row = 0; row < pegRows; row++) {
+        for (let col = 0; col <= row; col++) {
+          const x = width/2 - (row * pegSpacingX/2) + (col * pegSpacingX);
+          const y = (row + 1) * pegSpacingY;
+          pegs.push({x, y, hits: 0});
+        }
+      }
+    }
+
+    function createBalls(count) {
+      balls = [];
+      ballQueue = [];
+      bins = new Array(divisions).fill(0);
+      let whiteBursts = new Set([
+        Math.floor(count / 2),
+        Math.floor(3 * count / 4)
+      ]);
+      let whiteBurstCount = Math.floor(count / 10);
+      let totalAdded = 0;
+      for (let i = 0; i < count; i++) {
+        if (whiteBursts.has(i)) {
+          for (let j = 0; j < whiteBurstCount; j++) {
+            ballQueue.push({ x: width/2, y: 20, vx: 0, vy: 0, active: false, color: '#fff' });
+            totalAdded++;
+          }
+        }
+        const last5 = Math.floor(count * 0.05);
+        const nearLast10 = Math.floor(count * 0.10);
+        let color = null;
+        if (i >= count - last5) {
+          color = '#fff';
+        } else if (i >= count - nearLast10) {
+          color = (i % 2 === 0) ? '#fff' : '#000';
+        }
+        ballQueue.push({ x: width/2, y: 20, vx: 0, vy: 0, active: false, color });
+      }
+    }
+
+    function launchBalls() {
+      const ballsPerInterval = Math.max(1, Math.floor(totalBalls / (simulationDuration * 20)));
+      launchInterval = setInterval(() => {
+        for (let i = 0; i < ballsPerInterval && ballQueue.length > 0; i++) {
+          let ball = ballQueue.shift();
+          activeBalls.push(ball);
+        }
+        if (ballQueue.length === 0) {
+          clearInterval(launchInterval);
+        }
+      }, 50);
+    }
+
+    function updateBalls() {
+      const damping = 0.7;
+
+      for (let ball of activeBalls) {
+        ball.vy += gravity;
+        ball.x += ball.vx;
+        ball.y += ball.vy;
+
+        for (let peg of pegs) {
+          const dx = ball.x - peg.x;
+          const dy = ball.y - peg.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          if (dist < ballSize + pegSize) {
+            peg.hits = (peg.hits || 0) + 1;
+            ball.vy *= damping;
+            ball.vx += (Math.random() - 0.5) * (simulationMode === 'randomized' ? 6 : 2);
+          }
+        }
+
+        if (ball.x < ballSize) {
+          ball.x = ballSize;
+          ball.vx = Math.abs(ball.vx) * damping;
+        }
+        if (ball.x > width - ballSize) {
+          ball.x = width - ballSize;
+          ball.vx = -Math.abs(ball.vx) * damping;
+        }
+
+        if (ball.y > height - floorDepth - ballSize) {
+          const binIndex = Math.floor((ball.x / width) * divisions);
+          bins[Math.min(binIndex, divisions - 1)]++;
+          ball.toRemove = true;
+        }
+      }
+
+      activeBalls = activeBalls.filter(b => !b.toRemove);
+    }
+
+    function drawBoard() {
+      // base clear
+      ctx.clearRect(0, 0, width, height);
+
+      // flashing overlay for last 10% (drawn AFTER clear so it's visible)
+      if (ballQueue.length < totalBalls * 0.1) {
+        let alpha = 0.15 + 0.05 * Math.sin(Date.now() / 100);
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#0f0';
+
+      ctx.fillRect(0, 0, 2, height);
+      ctx.fillRect(width-2, 0, 2, height);
+
+      for (let peg of pegs) {
+        ctx.beginPath();
+        ctx.fillStyle = 'gray';
+        ctx.strokeStyle = 'green';
+        ctx.lineWidth = 1;
+        ctx.arc(peg.x, peg.y, pegSize, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        if (peg.hits) {
+          ctx.fillStyle = 'white';
+          ctx.font = '10px Courier';
+          ctx.fillText(peg.hits, peg.x + pegSize + 2, peg.y);
+          ctx.fillStyle = '#0f0';
+        }
+      }
+
+      ctx.fillStyle = '#ff0';
+      for (let i = 0; i < activeBalls.length; i++) {
+        let ball = activeBalls[i];
+        ctx.beginPath();
+        const pattern = [1, 2, 3, 4, 4, 8, 9, 16, 25];
+        const colors = ['#000', '#fff', '#f00', '#0f0', '#00f']; // black, white, red, green, blue
+        let total = 0;
+        let group = 0;
+        for (let j = 0; j < pattern.length; j++) {
+          total += pattern[j];
+          if (i < total) {
+            group = j;
+            break;
+          }
+        }
+        ctx.fillStyle = ball.color || colors[group % colors.length];
+        ctx.arc(ball.x, ball.y, ballSize, 0, Math.PI * 2);
+        ctx.fill();
+        if (i < totalBalls * 0.25) {
+          ctx.strokeStyle = 'black';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
+
+      ctx.strokeStyle = '#0f0';
+      const binWidth = width / divisions;
+      for (let i = 0; i <= divisions; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * binWidth, height - floorDepth);
+        ctx.lineTo(i * binWidth, height);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, height - floorDepth, width, 2);
+
+      const maxCount = Math.max(1, ...bins);
+      for (let i = 0; i < bins.length; i++) {
+        const binRatio = bins[i] / maxCount;
+        const h = binRatio * floorDepth;
+        const r = Math.floor(255 * binRatio);
+        const g = 0;
+        const b = Math.floor(255 * (1 - binRatio));
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(i * binWidth, height - 2 - h, binWidth, h);
+      }
+
+      ctx.save();
+      ctx.globalAlpha = 0.5;
+      const gradient = ctx.createLinearGradient(0, height - floorDepth, width, height - floorDepth - floorDepth);
+      gradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
+      gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.8)');
+      gradient.addColorStop(1, 'rgba(255, 255, 255, 0.1)');
+      ctx.strokeStyle = gradient;
+      ctx.lineWidth = Math.min(5, 1 + totalBalls / 8192);
+
+      ctx.beginPath();
+      const mean = divisions / 2;
+      const stdDev = Math.sqrt(divisions / 4);
+      for (let i = 0; i <= divisions; i++) {
+        const x = i * binWidth + binWidth / 2;
+        const z = (i - mean) / stdDev;
+        const y = height - 2 - (Math.exp(-0.5 * z * z) * floorDepth);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function animate() {
+      const progressBar = document.getElementById('progressBar');
+      const flowRateBar = document.getElementById('flowRate');
+      const speedBar = document.getElementById('speedBar');
+      if (progressBar && totalBalls > 0) {
+        const val = (totalBalls - ballQueue.length) / totalBalls;
+        progressBar.value = val;
+        document.getElementById('progressVal').textContent = Math.round(val * 100) + '%';
+      }
+      if (flowRateBar && simulationDuration > 0) {
+        const launched = totalBalls - ballQueue.length;
+        const flowVal = Math.min(1, launched / (simulationDuration * 20));
+        flowRateBar.value = flowVal;
+        document.getElementById('flowVal').textContent = Math.round(flowVal * 100) + '%';
+      }
+      if (speedBar) {
+        const speed = Math.min(1, gravity / 10);
+        speedBar.value = speed;
+        document.getElementById('speedVal').textContent = Math.round(speed * 100) + '%';
+      }
+      updateBalls();
+      drawBoard();
+      requestAnimationFrame(animate);
+    }
+
+    function startSimulation() {
+      const realTimeCheckbox = document.getElementById('realTimeCheckbox');
+      const isRealTime = realTimeCheckbox ? realTimeCheckbox.checked : false;
+      const binCountInput = document.getElementById('binCount');
+      if (binCountInput) {
+        divisions = Math.max(2, parseInt(binCountInput.value));
+      }
+      const ballSizeInput = document.getElementById('ballSize');
+      const pegSizeInput = document.getElementById('pegSize');
+      if (ballSizeInput) ballSize = parseInt(ballSizeInput.value);
+      if (pegSizeInput) pegSize = parseInt(pegSizeInput.value);
+
+      totalBalls = parseInt(document.getElementById('ballCount').value);
+      simulationDuration = isRealTime ? 1 : parseFloat(document.getElementById('duration').value);
+      const modeOptions = document.getElementsByName('mode');
+      for (let option of modeOptions) {
+        if (option.checked) simulationMode = option.value;
+      }
+
+      createPegs();
+      createBalls(totalBalls);
+      activeBalls = [];
+      gravity = 5 * (10 / simulationDuration);
+
+      launchBalls();
+    }
+
+    document.getElementById('ballCount').addEventListener('input', e => {
+      document.getElementById('ballCountVal').textContent = e.target.value;
+    });
+    document.getElementById('duration').addEventListener('input', e => document.getElementById('durationVal').textContent = e.target.value);
+    document.getElementById('realTimeCheckbox').addEventListener('change', e => {
+      const durationSlider = document.getElementById('duration');
+      durationSlider.disabled = e.target.checked;
+    });
+    document.getElementById('ballSize').addEventListener('input', e => document.getElementById('ballSizeVal').textContent = e.target.value);
+    document.getElementById('pegSize').addEventListener('input', e => document.getElementById('pegSizeVal').textContent = e.target.value);
+    document.getElementById('binCount').addEventListener('input', e => document.getElementById('binCountVal').textContent = e.target.value);
+
+    createPegs();
+    drawBoard();
+    animate();
+  </script></body>
+          </html>
